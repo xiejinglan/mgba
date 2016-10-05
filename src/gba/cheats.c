@@ -75,9 +75,9 @@ static struct mCheatSet* GBACheatSetCreate(struct mCheatDevice* device, const ch
 	UNUSED(device);
 	struct GBACheatSet* set = malloc(sizeof(*set));
 	mCheatSetInit(&set->d, name);
-	set->incompleteCheat = 0;
+	set->incompleteCheat = -1;
 	set->incompletePatch = 0;
-	set->currentBlock = 0;
+	set->currentBlock = -1;
 	set->gsaVersion = 0;
 	set->cbRngState = 0;
 	set->cbMaster = 0;
@@ -300,14 +300,16 @@ static void GBACheatDumpDirectives(struct mCheatSet* set, struct StringList* dir
 	}
 	StringListClear(directives);
 
-	char** directive = StringListAppend(directives);
+	char** directive;
 	switch (cheats->gsaVersion) {
 	case 1:
 	case 2:
+		directive = StringListAppend(directives);
 		*directive = strdup("GSAv1");
 		break;
 	case 3:
 	case 4:
+		directive = StringListAppend(directives);
 		*directive = strdup("PARv3");
 		break;
 	}
