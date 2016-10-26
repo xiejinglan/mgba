@@ -1,3 +1,21 @@
+0.5.2: (Future)
+Bugfixes:
+ - GBA Memory: Fix misaligned BIOS reads
+ - GBA BIOS: Fix MidiKey2Freq BIOS reads
+ - GBA BIOS: Fix invalid CpuSet not setting BIOS prefetch
+ - GB MBC: Fix SRAM dangling pointer with RTC games
+ - Windows: Fix Unicode directory handling
+ - Qt: Fix changing resolution of software renderer
+ - Qt: Fix setting overrides
+ - Qt: Fix cut off tiles and alignment issues in tile viewer
+ - GBA Cheats: Fix GameShark ROM patches
+ - GB MBC: Fix initializing MBC when no ROM is loaded
+ - VFS: Fix resizing memory chunks when not needed
+ - GB Memory: Fix patching ROM bank 0
+Misc:
+ - PSP2: Improved controller rumble
+ - GB, GBA: Prevent loading null ROMs
+
 0.5.1: (2016-10-05)
 Bugfixes:
  - Core: Fix importing save games as read-only
