@@ -68,9 +68,10 @@ static void GBInit(void* cpu, struct mCPUComponent* component) {
 
 	gb->model = GB_MODEL_AUTODETECT;
 
-	gb->biosVf = 0;
-	gb->romVf = 0;
-	gb->sramVf = 0;
+	gb->biosVf = NULL;
+	gb->romVf = NULL;
+	gb->sramVf = NULL;
+	gb->sramRealVf = NULL;
 
 	gb->pristineRom = 0;
 	gb->pristineRomSize = 0;
@@ -222,6 +223,7 @@ void GBSavedataMask(struct GB* gb, struct VFile* vf, bool writeback) {
 	gb->sramVf = vf;
 	gb->sramMaskWriteback = writeback;
 	gb->memory.sram = vf->map(vf, gb->sramSize, MAP_READ);
+	GBMBCSwitchSramBank(gb, gb->memory.sramCurrentBank);
 }
 
 void GBSavedataUnmask(struct GB* gb) {

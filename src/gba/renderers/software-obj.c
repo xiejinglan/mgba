@@ -52,8 +52,8 @@
 		renderer->spriteCyclesRemaining -= 2; \
 		xAccum += mat.a; \
 		yAccum += mat.c; \
-		int localX = (xAccum >> 8); \
-		int localY = (yAccum >> 8); \
+		int localX = xAccum >> 8; \
+		int localY = yAccum >> 8; \
 		\
 		if (localX & widthMask || localY & heightMask) { \
 			break; \
@@ -200,13 +200,12 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 		int outX = x >= start ? x : start;
 		int condition = x + totalWidth;
 		int inX = outX - x;
-
 		if (end < condition) {
 			condition = end;
 		}
 
 		int xAccum = mat.a * (inX - 1 - (totalWidth >> 1)) + mat.b * (inY - (totalHeight >> 1)) + (width << 7);
-		int yAccum = mat.c * (inX - 1 - (totalWidth >> 1)) + mat.d * (inY - (totalHeight >> 1)) + (width << 7);
+		int yAccum = mat.c * (inX - 1 - (totalWidth >> 1)) + mat.d * (inY - (totalHeight >> 1)) + (height << 7);
 
 		// Clip off early pixels
 		// TODO: Transform end coordinates too
