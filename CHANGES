@@ -33,10 +33,12 @@ Bugfixes:
  - GB Memory: Fix HDMA5 value after DMA completes
  - GB Video: Hblank IRQs should mask LYC=LY IRQs
  - GB Audio: Reset envelope timer when reseting sound channel
+ - Libretro: Fix disabling BIOS
 Misc:
  - PSP2: Improved controller rumble
  - GB, GBA: Prevent loading null ROMs
  - GB Audio: Initialize wave RAM to GBC values
+ - GB Memory: Reset ROM bank when loading a ROM
 
 0.5.1: (2016-10-05)
 Bugfixes:
