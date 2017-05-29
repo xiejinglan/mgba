@@ -308,6 +308,8 @@ void GameController::setConfig(const mCoreConfig* config) {
 	if (isLoaded()) {
 		threadInterrupt();
 		mCoreLoadForeignConfig(m_threadContext.core, config);
+		m_audioSync = m_threadContext.sync.audioWait;
+		m_videoSync = m_threadContext.sync.videoFrameWait;
 		m_audioProcessor->setInput(&m_threadContext);
 		threadContinue();
 	}
@@ -584,12 +586,16 @@ void GameController::cleanGame() {
 	if (!m_gameOpen || mCoreThreadIsActive(&m_threadContext)) {
 		return;
 	}
+
+	m_audioProcessor->pause();
 	mCoreThreadJoin(&m_threadContext);
 
 	delete[] m_drawContext;
 	delete[] m_frontBuffer;
 
+	mCoreConfigDeinit(&m_threadContext.core->config);
 	m_threadContext.core->deinit(m_threadContext.core);
+	m_threadContext.core = nullptr;
 	m_gameOpen = false;
 }
 
@@ -1040,6 +1046,17 @@ void GameController::setSync(bool enable) {
 	}
 	m_sync = enable;
 }
+
+void GameController::setAudioSync(bool enable) {
+	m_audioSync = enable;
+	m_threadContext.sync.audioWait = enable;
+}
+
+void GameController::setVideoSync(bool enable) {
+	m_videoSync = enable;
+	m_threadContext.sync.videoFrameWait = enable;
+}
+
 void GameController::setAVStream(mAVStream* stream) {
 	threadInterrupt();
 	m_stream = stream;
@@ -1145,7 +1162,7 @@ void GameController::updateKeys() {
 }
 
 void GameController::redoSamples(int samples) {
-	if (m_threadContext.core) {
+	if (m_gameOpen && m_threadContext.core) {
 		m_threadContext.core->setAudioBufferSize(m_threadContext.core, samples);
 	}
 	QMetaObject::invokeMethod(m_audioProcessor, "inputParametersChanged");

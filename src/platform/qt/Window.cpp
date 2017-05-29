@@ -264,19 +264,6 @@ void Window::reloadConfig() {
 
 	m_log.setLevels(opts->logLevel);
 
-	QString saveStateExtdata = m_config->getOption("saveStateExtdata");
-	bool ok;
-	int flags = saveStateExtdata.toInt(&ok);
-	if (ok) {
-		m_controller->setSaveStateExtdata(flags);
-	}
-
-	QString loadStateExtdata = m_config->getOption("loadStateExtdata");
-	flags = loadStateExtdata.toInt(&ok);
-	if (ok) {
-		m_controller->setLoadStateExtdata(flags);
-	}
-
 	m_controller->setConfig(m_config->config());
 	m_display->lockAspectRatio(opts->lockAspectRatio);
 	m_display->filter(opts->resampleVideo);
@@ -424,6 +411,7 @@ void Window::selectPatch() {
 
 void Window::openView(QWidget* widget) {
 	connect(this, SIGNAL(shutdown()), widget, SLOT(close()));
+	connect(m_controller, SIGNAL(gameStopped(mCoreThread*)), widget, SLOT(close()));
 	widget->setAttribute(Qt::WA_DeleteOnClose);
 	widget->show();
 }
@@ -1036,11 +1024,11 @@ void Window::setupMenu(QMenuBar* menubar) {
 #endif
 
 	fileMenu->addSeparator();
-	QAction* multiWindow = new QAction(tr("New multiplayer window"), fileMenu);
-	connect(multiWindow, &QAction::triggered, [this]() {
+	m_multiWindow = new QAction(tr("New multiplayer window"), fileMenu);
+	connect(m_multiWindow, &QAction::triggered, [this]() {
 		GBAApp::app()->newWindow();
 	});
-	addControlledAction(fileMenu, multiWindow, "multiWindow");
+	addControlledAction(fileMenu, m_multiWindow, "multiWindow");
 
 #ifndef Q_OS_MAC
 	fileMenu->addSeparator();
@@ -1147,14 +1135,14 @@ void Window::setupMenu(QMenuBar* menubar) {
 	ConfigOption* videoSync = m_config->addOption("videoSync");
 	videoSync->addBoolean(tr("Sync to &video"), emulationMenu);
 	videoSync->connect([this](const QVariant& value) {
-		reloadConfig();
+		m_controller->setVideoSync(value.toBool());
 	}, this);
 	m_config->updateOption("videoSync");
 
 	ConfigOption* audioSync = m_config->addOption("audioSync");
 	audioSync->addBoolean(tr("Sync to &audio"), emulationMenu);
 	audioSync->connect([this](const QVariant& value) {
-		reloadConfig();
+		m_controller->setAudioSync(value.toBool());
 	}, this);
 	m_config->updateOption("audioSync");
 
@@ -1256,11 +1244,12 @@ void Window::setupMenu(QMenuBar* menubar) {
 	avMenu->addSeparator();
 
 	ConfigOption* mute = m_config->addOption("mute");
-	mute->addBoolean(tr("Mute"), avMenu);
+	QAction* muteAction = mute->addBoolean(tr("Mute"), avMenu);
 	mute->connect([this](const QVariant& value) {
 		reloadConfig();
 	}, this);
 	m_config->updateOption("mute");
+	addControlledAction(avMenu, muteAction, "mute");
 
 	QMenu* target = avMenu->addMenu(tr("FPS target"));
 	ConfigOption* fpsTargetOption = m_config->addOption("fpsTarget");
@@ -1445,11 +1434,13 @@ void Window::setupMenu(QMenuBar* menubar) {
 	saveStateExtdata->connect([this](const QVariant& value) {
 		m_controller->setSaveStateExtdata(value.toInt());
 	}, this);
+	m_config->updateOption("saveStateExtdata");
 
 	ConfigOption* loadStateExtdata = m_config->addOption("loadStateExtdata");
 	loadStateExtdata->connect([this](const QVariant& value) {
 		m_controller->setLoadStateExtdata(value.toInt());
 	}, this);
+	m_config->updateOption("loadStateExtdata");
 
 	QAction* exitFullScreen = new QAction(tr("Exit fullscreen"), frameMenu);
 	connect(exitFullScreen, SIGNAL(triggered()), this, SLOT(exitFullScreen()));
