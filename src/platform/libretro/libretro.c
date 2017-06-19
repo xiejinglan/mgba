@@ -19,6 +19,8 @@
 #include "gba/cheats.h"
 #include "gba/core.h"
 #include "gba/serialize.h"
+#include "gba/sio.h"
+//#include "gba/sio/lockstep.h"
 #endif
 #include "util/circle-buffer.h"
 #include "util/memory.h"
@@ -51,18 +53,20 @@ static void _setRumble(struct mRumble* rumble, int enable);
 static uint8_t _readLux(struct GBALuminanceSource* lux);
 static void _updateLux(struct GBALuminanceSource* lux);
 
-static struct mCore* core;
+static struct mCore* core[4];
 static void* outputBuffer;
 static void* data;
 static size_t dataSize;
 static void* savedata;
-static struct mAVStream stream;
+static struct mAVStream stream[4];
 static int rumbleLevel;
 static struct CircleBuffer rumbleHistory;
 static struct mRumble rumble;
 static struct GBALuminanceSource lux;
 static int luxLevel;
 static struct mLogger logger;
+
+//GBASIOLockstep m_lockstep;
 
 static void _reloadSettings(void) {
 	struct mCoreOptions opts = {
@@ -88,16 +92,21 @@ static void _reloadSettings(void) {
 	var.value = 0;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		if (strcmp(var.value, "Don't Remove") == 0) {
-			mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "ignore");
+			for(int i=0; i < 4; i++)
+				mCoreConfigSetDefaultValue(&core[i]->config, "idleOptimization", "ignore");
 		} else if (strcmp(var.value, "Remove Known") == 0) {
-			mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "remove");
+			for(int i=0; i < 4; i++)
+				mCoreConfigSetDefaultValue(&core[i]->config, "idleOptimization", "remove");
 		} else if (strcmp(var.value, "Detect and Remove") == 0) {
-			mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
+			for(int i=0; i < 4; i++)
+				mCoreConfigSetDefaultValue(&core[0]->config, "idleOptimization", "detect");
 		}
 	}
 
-	mCoreConfigLoadDefaults(&core->config, &opts);
-	mCoreLoadConfig(core);
+	for(int i=0; i < 4; i++) {
+		mCoreConfigLoadDefaults(&core[i]->config, &opts);
+		mCoreLoadConfig(core[i]);
+	}
 }
 
 unsigned retro_api_version(void) {
@@ -145,20 +154,22 @@ void retro_get_system_info(struct retro_system_info* info) {
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
 #endif
+
 	info->library_version = "0.5.2" GIT_VERSION;
-	info->library_name = "mGBA";
+	info->library_name = "mGBA-multi";
 	info->block_extract = false;
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	unsigned width, height;
-	core->desiredVideoDimensions(core, &width, &height);
-	info->geometry.base_width = width;
-	info->geometry.base_height = height;
-	info->geometry.max_width = width;
-	info->geometry.max_height = height;
-	info->geometry.aspect_ratio = width / (double) height;
-	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
+	core[0]->desiredVideoDimensions(core[0], &width, &height);
+
+	info->geometry.base_width = width * 2;
+	info->geometry.base_height = height * 2;
+	info->geometry.max_width = 512;
+	info->geometry.max_height = VIDEO_VERTICAL_PIXELS * 2;
+	info->geometry.aspect_ratio = width / (double) (height);
+	info->timing.fps = core[0]->frequency(core[0]) / (float) core[0]->frameCycles(core[0]);
 	info->timing.sample_rate = 32768;
 }
 
@@ -223,10 +234,16 @@ void retro_init(void) {
 	logger.log = GBARetroLog;
 	mLogSetDefaultLogger(&logger);
 
-	stream.videoDimensionsChanged = 0;
-	stream.postAudioFrame = 0;
-	stream.postAudioBuffer = _postAudioBuffer;
-	stream.postVideoFrame = 0;
+	stream[0].videoDimensionsChanged = 0;
+	stream[0].postAudioFrame = 0;
+	stream[0].postAudioBuffer = _postAudioBuffer;
+	stream[0].postVideoFrame = 0;
+	stream[1].videoDimensionsChanged = 0;
+	stream[1].postVideoFrame = 0;
+	stream[2].videoDimensionsChanged = 0;
+	stream[2].postVideoFrame = 0;
+	stream[3].videoDimensionsChanged = 0;
+	stream[3].postVideoFrame = 0;
 }
 
 void retro_deinit(void) {
@@ -242,35 +259,37 @@ static int turboclock = 0;
 static bool indownstate = true;
 
 int16_t cycleturbo(bool x/*turbo A*/, bool y/*turbo B*/, bool l2/*turbo L*/, bool r2/*turbo R*/) {
-   int16_t buttons = 0;
-   turboclock++;
-   if (turboclock >= 2) {
-      turboclock = 0;
-      indownstate = !indownstate;
-   }
-   
-   if (x) {
-      buttons |= indownstate << 0;
-   }
-   
-   if (y) {
-      buttons |= indownstate << 1;
-   }
-   
-   if (l2) {
-      buttons |= indownstate << 9;
-   }
-   
-   if (r2) {
-      buttons |= indownstate << 8;
-   }
-   
-   return buttons;
+	int16_t buttons = 0;
+	turboclock++;
+	if (turboclock >= 2) {
+		turboclock = 0;
+		indownstate = !indownstate;
+	}
+
+	if (x) {
+		buttons |= indownstate << 0;
+	}
+
+	if (y) {
+		buttons |= indownstate << 1;
+	}
+
+	if (l2) {
+		buttons |= indownstate << 9;
+	}
+
+	if (r2) {
+		buttons |= indownstate << 8;
+	}
+
+	return buttons;
 }
 
 
 void retro_run(void) {
-	uint16_t keys;
+	uint16_t keys[4];
+	static int frame;
+
 	inputPollCallback();
 
 	struct retro_variable var = {
@@ -281,31 +300,35 @@ void retro_run(void) {
 	bool updated = false;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
 		if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
-			((struct GBA*) core->board)->allowOpposingDirections = strcmp(var.value, "yes") == 0;
+			for(int i=0; i < 4; i++)
+				((struct GBA*) core[i]->board)->allowOpposingDirections = strcmp(var.value, "yes") == 0;
 		}
 	}
 
-	keys = 0;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A)) << 0;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) << 1;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT)) << 2;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START)) << 3;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT)) << 4;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT)) << 5;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP)) << 6;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN)) << 7;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) << 8;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) << 9;
-   
-   //turbo keys
-   keys |= cycleturbo(RDKEYP1(X),RDKEYP1(Y),RDKEYP1(L2),RDKEYP1(R2));
-   
-	core->setKeys(core, keys);
+	for (int i = 0; i < 4; i++)
+	{
+		keys[i] = 0;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A)) << 0;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) << 1;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT)) << 2;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START)) << 3;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT)) << 4;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT)) << 5;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP)) << 6;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN)) << 7;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) << 8;
+		keys[i] |= (!!inputCallback(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) << 9;
+
+		//turbo keys[i]
+		keys[i] |= cycleturbo(RDKEYP1(X),RDKEYP1(Y),RDKEYP1(L2),RDKEYP1(R2));
+	}
+	for(int i=0; i < 4; i++)
+		core[i]->setKeys(core[i], keys[i]);
 
 	static bool wasAdjustingLux = false;
 	if (wasAdjustingLux) {
 		wasAdjustingLux = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3) ||
-		                  inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
+								inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
 	} else {
 		if (inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) {
 			++luxLevel;
@@ -322,18 +345,12 @@ void retro_run(void) {
 		}
 	}
 
-	core->runFrame(core);
+	for(int i=0; i < 4; i++)
+	  core[i]->runFrame(core[i]);
 	unsigned width, height;
-	core->desiredVideoDimensions(core, &width, &height);
-	videoCallback(outputBuffer, width, height, BYTES_PER_PIXEL * 256);
-
-	// This was from aliaspider patch (4539a0e), game boy audio is buggy with it (adapted for this refactored core)
-/*
-	int16_t samples[SAMPLES * 2];
-	int produced = blip_read_samples(core->getAudioChannel(core, 0), samples, SAMPLES, true);
-	blip_read_samples(core->getAudioChannel(core, 1), samples + 1, SAMPLES, true);
-	audioCallback(samples, produced);
-*/
+	core[0]->desiredVideoDimensions(core[0], &width, &height);
+	videoCallback(outputBuffer, width * 2, VIDEO_VERTICAL_PIXELS * 2 , BYTES_PER_PIXEL * 512);;
+	frame++;
 }
 
 void static _setupMaps(struct mCore* core) {
@@ -348,67 +365,67 @@ void static _setupMaps(struct mCore* core) {
 		size_t savedataSize = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
 
 		/* Map internal working RAM */
-		descs[0].ptr    = gba->memory.iwram;
+		descs[0].ptr	 = gba->memory.iwram;
 		descs[0].start  = BASE_WORKING_IRAM;
-		descs[0].len    = SIZE_WORKING_IRAM;
+		descs[0].len	 = SIZE_WORKING_IRAM;
 		descs[0].select = 0xFF000000;
 
 		/* Map working RAM */
-		descs[1].ptr    = gba->memory.wram;
+		descs[1].ptr	 = gba->memory.wram;
 		descs[1].start  = BASE_WORKING_RAM;
-		descs[1].len    = SIZE_WORKING_RAM;
+		descs[1].len	 = SIZE_WORKING_RAM;
 		descs[1].select = 0xFF000000;
 
 		/* Map save RAM */
 		/* TODO: if SRAM is flash, use start=0 addrspace="S" instead */
-		descs[2].ptr    = savedataSize ? savedata : NULL;
+		descs[2].ptr	 = savedataSize ? savedata : NULL;
 		descs[2].start  = BASE_CART_SRAM;
-		descs[2].len    = savedataSize;
+		descs[2].len	 = savedataSize;
 
 		/* Map ROM */
-		descs[3].ptr    = gba->memory.rom;
+		descs[3].ptr	 = gba->memory.rom;
 		descs[3].start  = BASE_CART0;
-		descs[3].len    = romSize;
+		descs[3].len	 = romSize;
 		descs[3].flags  = RETRO_MEMDESC_CONST;
 
-		descs[4].ptr    = gba->memory.rom;
+		descs[4].ptr	 = gba->memory.rom;
 		descs[4].start  = BASE_CART1;
-		descs[4].len    = romSize;
+		descs[4].len	 = romSize;
 		descs[4].flags  = RETRO_MEMDESC_CONST;
 
-		descs[5].ptr    = gba->memory.rom;
+		descs[5].ptr	 = gba->memory.rom;
 		descs[5].start  = BASE_CART2;
-		descs[5].len    = romSize;
+		descs[5].len	 = romSize;
 		descs[5].flags  = RETRO_MEMDESC_CONST;
 
 		/* Map BIOS */
-		descs[6].ptr    = gba->memory.bios;
+		descs[6].ptr	 = gba->memory.bios;
 		descs[6].start  = BASE_BIOS;
-		descs[6].len    = SIZE_BIOS;
+		descs[6].len	 = SIZE_BIOS;
 		descs[6].flags  = RETRO_MEMDESC_CONST;
 
 		/* Map VRAM */
-		descs[7].ptr    = gba->video.vram;
+		descs[7].ptr	 = gba->video.vram;
 		descs[7].start  = BASE_VRAM;
-		descs[7].len    = SIZE_VRAM;
+		descs[7].len	 = SIZE_VRAM;
 		descs[7].select = 0xFF000000;
 
 		/* Map palette RAM */
-		descs[8].ptr    = gba->video.palette;
+		descs[8].ptr	 = gba->video.palette;
 		descs[8].start  = BASE_PALETTE_RAM;
-		descs[8].len    = SIZE_PALETTE_RAM;
+		descs[8].len	 = SIZE_PALETTE_RAM;
 		descs[8].select = 0xFF000000;
 
 		/* Map OAM */
-		descs[9].ptr    = &gba->video.oam; /* video.oam is a structure */
+		descs[9].ptr	 = &gba->video.oam; /* video.oam is a structure */
 		descs[9].start  = BASE_OAM;
-		descs[9].len    = SIZE_OAM;
+		descs[9].len	 = SIZE_OAM;
 		descs[9].select = 0xFF000000;
 
 		/* Map mmapped I/O */
-		descs[10].ptr    = gba->memory.io;
+		descs[10].ptr	 = gba->memory.io;
 		descs[10].start  = BASE_IO;
-		descs[10].len    = SIZE_IO;
+		descs[10].len	 = SIZE_IO;
 
 		mmaps.descriptors = descs;
 		mmaps.num_descriptors = sizeof(descs) / sizeof(descs[0]);
@@ -421,9 +438,10 @@ void static _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
-	core->reset(core);
-	_setupMaps(core);
-
+	for(int i=0; i < 4; i++) {
+		core[i]->reset(core[i]);
+		_setupMaps(core[i]);
+	}
 	if (rumbleCallback) {
 		CircleBufferClear(&rumbleHistory);
 	}
@@ -433,8 +451,8 @@ bool retro_load_game(const struct retro_game_info* game)
 {
 	struct VFile* rom;
 
-   if (!game)
-      return false;
+	if (!game)
+		return false;
 
 	if (game->data) {
 		data = anonymousMemoryMap(game->size);
@@ -449,65 +467,82 @@ bool retro_load_game(const struct retro_game_info* game)
 		return false;
 	}
 
-	core = mCoreFindVF(rom);
-	if (!core) {
+	for(int i=0; i < 4; i++)
+		core[i] = mCoreFindVF(rom);
+
+	if (!core[0] || !core[1] || !core[2] || !core[3]) {
 		rom->close(rom);
 		mappedMemoryFree(data, game->size);
 		return false;
 	}
-	mCoreInitConfig(core, NULL);
-	core->init(core);
-	core->setAVStream(core, &stream);
+
+	for(int i=0; i < 4; i++) {
+		mCoreInitConfig(core[i], NULL);
+		core[i]->init(core[i]);
+		core[i]->setAVStream(core[i], &stream[i]);
+	}
 
 #ifdef _3DS
 	outputBuffer = linearMemAlign(256 * VIDEO_VERTICAL_PIXELS * BYTES_PER_PIXEL, 0x80);
 #else
-	outputBuffer = malloc(256 * VIDEO_VERTICAL_PIXELS * BYTES_PER_PIXEL);
+	outputBuffer  = (uint8_t*)malloc(1024 * VIDEO_VERTICAL_PIXELS * BYTES_PER_PIXEL);
 #endif
-	core->setVideoBuffer(core, outputBuffer, 256);
+	core[0]->setVideoBuffer(core[0], outputBuffer, 512);
+	core[1]->setVideoBuffer(core[1], (uint8_t*)outputBuffer + BYTES_PER_PIXEL * VIDEO_HORIZONTAL_PIXELS, 512);
+	core[2]->setVideoBuffer(core[2], (uint8_t*)outputBuffer + BYTES_PER_PIXEL * (512 * VIDEO_VERTICAL_PIXELS), 512);
+	core[3]->setVideoBuffer(core[3], (uint8_t*)outputBuffer + BYTES_PER_PIXEL * (512 * VIDEO_VERTICAL_PIXELS + VIDEO_HORIZONTAL_PIXELS), 512);
 
-	core->setAudioBufferSize(core, SAMPLES);
+	for(int i=0; i < 4; i++) {
+		blip_set_rates(core[i]->getAudioChannel(core[i], 0), core[0]->frequency(core[0]), 32768);
+		blip_set_rates(core[i]->getAudioChannel(core[i], 1), core[0]->frequency(core[0]), 32768);
 
-	blip_set_rates(core->getAudioChannel(core, 0), core->frequency(core), 32768);
-	blip_set_rates(core->getAudioChannel(core, 1), core->frequency(core), 32768);
-
-	core->setRumble(core, &rumble);
+		core[i]->setRumble(core[i], &rumble);
+	}
 
 	savedata = anonymousMemoryMap(SIZE_CART_FLASH1M);
 	struct VFile* save = VFileFromMemory(savedata, SIZE_CART_FLASH1M);
 
 	_reloadSettings();
-	core->loadROM(core, rom);
-	core->loadSave(core, save);
+	for(int i=0; i < 4; i++) {
+		core[i]->loadROM(core[i], rom);
+		core[i]->loadSave(core[i], save);
+	}
 
 #ifdef M_CORE_GBA
-	if (core->platform(core) == PLATFORM_GBA) {
-		struct GBA* gba = core->board;
+	if (core[0]->platform(core[0]) == PLATFORM_GBA) {
+		struct GBA* gba = core[0]->board;
 		gba->luminanceSource = &lux;
 
 		const char* sysDir = 0;
-		if (core->opts.useBios && environCallback(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysDir)) {
+		if (core[0]->opts.useBios && environCallback(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysDir)) {
 			char biosPath[PATH_MAX];
 			snprintf(biosPath, sizeof(biosPath), "%s%s%s", sysDir, PATH_SEP, "gba_bios.bin");
 			struct VFile* bios = VFileOpen(biosPath, O_RDONLY);
 			if (bios) {
-				core->loadBIOS(core, bios, 0);
+				for(int i=0; i < 4; i++)
+				core[i]->loadBIOS(core[i], bios, 0);
 			}
 		}
 	}
 #endif
 
-	core->reset(core);
-	_setupMaps(core);
+	for(int i=0; i < 4; i++)
+	{
+		core[i]->reset(core[i]);
+		_setupMaps(core[i]);
+	}
 
 	return true;
 }
 
 void retro_unload_game(void) {
-	if (!core) {
+	if (!core[0] || !core[1] || !core[2] || !core[3]) {
 		return;
 	}
-	core->deinit(core);
+
+	/* deinit in reverse order*/
+	for(int i=3; i <= 0; i--)
+	  core[i]->deinit(core[i]);
 	mappedMemoryFree(data, dataSize);
 	data = 0;
 	mappedMemoryFree(savedata, SIZE_CART_FLASH1M);
@@ -516,14 +551,32 @@ void retro_unload_game(void) {
 }
 
 size_t retro_serialize_size(void) {
-	return core->stateSize(core);
+	return 4 * (core[0]->stateSize(core[0]));
 }
 
 bool retro_serialize(void* data, size_t size) {
 	if (size != retro_serialize_size()) {
 		return false;
 	}
-	core->saveState(core, data);
+	void *tmp;
+	size_t tmp_size = size / 4;
+
+	tmp = malloc(tmp_size);
+	core[0]->saveState(core[0], tmp);
+	memcpy(data, tmp, tmp_size);
+	free(tmp);
+	tmp = malloc(tmp_size);
+	core[1]->saveState(core[1], tmp);
+	memcpy(data + tmp_size, tmp, tmp_size);
+	free(tmp);
+	tmp = malloc(tmp_size);
+	core[2]->saveState(core[2], tmp);
+	memcpy(data + 2 * tmp_size, tmp, tmp_size);
+	free(tmp);
+	tmp = malloc(tmp_size);
+	core[3]->saveState(core[3], tmp);
+	memcpy(data + 3 * tmp_size, tmp, tmp_size);
+	free(tmp);
 	return true;
 }
 
@@ -531,43 +584,51 @@ bool retro_unserialize(const void* data, size_t size) {
 	if (size != retro_serialize_size()) {
 		return false;
 	}
-	core->loadState(core, data);
+	size_t tmp_size = size / 4;
+	core[0]->loadState(core[0], data);
+	core[1]->loadState(core[1], data + tmp_size);
+	core[2]->loadState(core[2], data + 2 * tmp_size);
+	core[3]->loadState(core[3], data + 3 * tmp_size);
 	return true;
 }
 
 void retro_cheat_reset(void) {
-	mCheatDeviceClear(core->cheatDevice(core));
+	for(int i=0; i < 4; i++)
+		mCheatDeviceClear(core[i]->cheatDevice(core[i]));
 }
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	UNUSED(index);
 	UNUSED(enabled);
-	struct mCheatDevice* device = core->cheatDevice(core);
-	struct mCheatSet* cheatSet = NULL;
-	if (mCheatSetsSize(&device->cheats)) {
-		cheatSet = *mCheatSetsGetPointer(&device->cheats, 0);
-	} else {
-		cheatSet = device->createSet(device, NULL);
-		mCheatAddSet(device, cheatSet);
-	}
-	// Convert the super wonky unportable libretro format to something normal
-	char realCode[] = "XXXXXXXX XXXXXXXX";
-	size_t len = strlen(code) + 1; // Include null terminator
-	size_t i, pos;
-	for (i = 0, pos = 0; i < len; ++i) {
-		if (isspace((int) code[i]) || code[i] == '+') {
-			realCode[pos] = ' ';
+	for(int i=0; i < 4; i++) {
+		struct mCheatDevice* device = core[i]->cheatDevice(core[i]);
+		struct mCheatSet* cheatSet = NULL;
+		if (mCheatSetsSize(&device->cheats)) {
+			cheatSet = *mCheatSetsGetPointer(&device->cheats, 0);
 		} else {
-			realCode[pos] = code[i];
+			cheatSet = device->createSet(device, NULL);
+			mCheatAddSet(device, cheatSet);
 		}
-		if ((pos == 13 && (realCode[pos] == ' ' || !realCode[pos])) || pos == 17) {
-			realCode[pos] = '\0';
-			mCheatAddLine(cheatSet, realCode, 0);
-			pos = 0;
-			continue;
+		// Convert the super wonky unportable libretro format to something normal
+		char realCode[] = "XXXXXXXX XXXXXXXX";
+		size_t len = strlen(code) + 1; // Include null terminator
+		size_t i, pos;
+		for (i = 0, pos = 0; i < len; ++i) {
+			if (isspace((int) code[i]) || code[i] == '+') {
+				realCode[pos] = ' ';
+			} else {
+				realCode[pos] = code[i];
+			}
+			if ((pos == 13 && (realCode[pos] == ' ' || !realCode[pos])) || pos == 17) {
+				realCode[pos] = '\0';
+				mCheatAddLine(cheatSet, realCode, 0);
+				pos = 0;
+				continue;
+			}
+			++pos;
 		}
-		++pos;
 	}
+
 }
 
 unsigned retro_get_region(void) {
@@ -587,22 +648,22 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 }
 
 void* retro_get_memory_data(unsigned id) {
-	struct GBA* gba = core->board;
-	struct GB* gb = core->board;
+	struct GBA* gba = core[0]->board;
+	struct GB* gb = core[0]->board;
 
 	if (id == RETRO_MEMORY_SAVE_RAM) {
 		return savedata;
 	}
 	if (id == RETRO_MEMORY_SYSTEM_RAM) {
-		if (core->platform(core) == PLATFORM_GBA)
+		if (core[0]->platform(core[0]) == PLATFORM_GBA)
 			return gba->memory.wram;
-		if (core->platform(core) == PLATFORM_GB)
+		if (core[0]->platform(core[0]) == PLATFORM_GB)
 			return gb->memory.wram;
 	}
 	if (id == RETRO_MEMORY_VIDEO_RAM) {
-		if (core->platform(core) == PLATFORM_GBA)
+		if (core[0]->platform(core[0]) == PLATFORM_GBA)
 			return gba->video.renderer->vram;
-		if (core->platform(core) == PLATFORM_GB)
+		if (core[0]->platform(core[0]) == PLATFORM_GB)
 			return gb->video.renderer->vram;
 	}
 
@@ -612,8 +673,8 @@ void* retro_get_memory_data(unsigned id) {
 size_t retro_get_memory_size(unsigned id) {
 	if (id == RETRO_MEMORY_SAVE_RAM) {
 #ifdef M_CORE_GBA
-		if (core->platform(core) == PLATFORM_GBA) {
-			switch (((struct GBA*) core->board)->memory.savedata.type) {
+		if (core[0]->platform(core[0]) == PLATFORM_GBA) {
+			switch (((struct GBA*) core[0]->board)->memory.savedata.type) {
 			case SAVEDATA_AUTODETECT:
 			case SAVEDATA_FLASH1M:
 				return SIZE_CART_FLASH1M;
@@ -629,8 +690,8 @@ size_t retro_get_memory_size(unsigned id) {
 		}
 #endif
 #ifdef M_CORE_GB
-		if (core->platform(core) == PLATFORM_GB) {
-			return ((struct GB*) core->board)->sramSize;
+		if (core[0]->platform(core[0]) == PLATFORM_GB) {
+			return ((struct GB*) core[0]->board)->sramSize;
 		}
 #endif
 	}

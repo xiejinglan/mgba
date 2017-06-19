@@ -70,7 +70,7 @@ else ifneq ($(findstring MINGW,$(shell uname -a)),)
    system_platform = win
 endif
 
-TARGET_NAME := mgba
+TARGET_NAME := mgba-multi
 
 DEFINES :=
 
