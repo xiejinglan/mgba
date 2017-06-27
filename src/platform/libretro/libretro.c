@@ -132,11 +132,10 @@ void retro_set_input_state(retro_input_state_t input) {
 void retro_get_system_info(struct retro_system_info* info) {
    info->need_fullpath = false;
    info->valid_extensions = "gba";
-#ifdef GIT_VERSION
-   info->library_version = GIT_VERSION;
-#else
-   info->library_version = "git";
+#ifndef GIT_VERSION
+#define GIT_VERSION ""
 #endif
+   info->library_version = "0.4.1" GIT_VERSION;
    info->library_name = "mGBA";
    info->block_extract = false;
 }
@@ -178,7 +177,8 @@ void retro_init(void) {
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Brighten Solar Sensor" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Darken Solar Sensor" }
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Darken Solar Sensor" },
+		{ 0 }
 	};
 	environCallback(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, &inputDescriptors);
 
