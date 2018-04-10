@@ -90,7 +90,7 @@ static void GBVideoSoftwareRendererUpdateWindow(struct GBVideoSoftwareRenderer* 
 			renderer->hasWindow = true;
 		} else {
 			if (!renderer->hasWindow) {
-				renderer->currentWy = renderer->lastY + 1 - renderer->wy;
+				renderer->currentWy = renderer->lastY - renderer->wy;
 			} else {
 				renderer->currentWy += renderer->lastY;
 			}
@@ -216,9 +216,6 @@ static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, i
 
 static void GBVideoSoftwareRendererFinishScanline(struct GBVideoRenderer* renderer, int y) {
 	struct GBVideoSoftwareRenderer* softwareRenderer = (struct GBVideoSoftwareRenderer*) renderer;
-	if (GBRegisterLCDCIsWindow(softwareRenderer->lcdc) && softwareRenderer->wy <= y && softwareRenderer->wx - 7 < GB_VIDEO_HORIZONTAL_PIXELS) {
-		++softwareRenderer->currentWy;
-	}
 }
 
 static void GBVideoSoftwareRendererFinishFrame(struct GBVideoRenderer* renderer) {
