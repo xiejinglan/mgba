@@ -4,6 +4,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(PLATFORM_SRC)
 set(QT_STATIC OFF)
+set(QT_DEFINES)
 
 if(BUILD_SDL)
 	add_definitions(-DBUILD_SDL)
@@ -35,6 +36,11 @@ if(NOT Qt5Widgets_FOUND)
 endif()
 
 if(APPLE)
+	execute_process(COMMAND xcrun --show-sdk-version OUTPUT_VARIABLE MACOSX_SDK)
+	if(MACOSX_SDK VERSION_GREATER 10.14)
+		list(APPEND QT_DEFINES USE_SHARE_WIDGET)
+	endif()
+
 	if(Qt5Widgets_VERSION MATCHES "^5.1[0-9]")
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mmacosx-version-min=10.8")
 	else()
@@ -183,7 +189,6 @@ if(M_CORE_GB)
 	list(APPEND PLATFORM_SRC ${GB_SRC})
 endif()
 
-set(QT_DEFINES)
 if(Qt5Multimedia_FOUND)
 	list(APPEND AUDIO_SRC
 		AudioProcessorQt.cpp
@@ -231,8 +236,9 @@ endif()
 
 qt5_add_resources(RESOURCES resources.qrc)
 if(BUILD_UPDATER)
-	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/updater.qrc.in ${CMAKE_CURRENT_BINARY_DIR}/updater.qrc)
+	file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/updater.qrc INPUT ${CMAKE_CURRENT_SOURCE_DIR}/updater.qrc.in)
 	qt5_add_resources(UPDATER_RESOURCES ${CMAKE_CURRENT_BINARY_DIR}/updater.qrc)
+	set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/updater.qrc PROPERTIES GENERATED ON)
 	list(APPEND RESOURCES ${UPDATER_RESOURCES})
 endif()
 if(APPLE)
