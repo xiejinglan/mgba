@@ -123,6 +123,12 @@ Window::Window(CoreManager* manager, ConfigController* config, int playerId, QWi
 		}
 	}, this);
 	m_config->updateOption("showLibrary");
+
+	ConfigOption* showFilenameInLibrary = m_config->addOption("showFilenameInLibrary");
+	showFilenameInLibrary->connect([this](const QVariant& value) {
+			m_libraryView->setShowFilename(value.toBool());
+	}, this); 
+    m_config->updateOption("showFilenameInLibrary");
 	ConfigOption* libraryStyle = m_config->addOption("libraryStyle");
 	libraryStyle->connect([this](const QVariant& value) {
 		m_libraryView->setViewStyle(static_cast<LibraryStyle>(value.toInt()));
@@ -173,8 +179,8 @@ Window::~Window() {
 #endif
 }
 
-void Window::argumentsPassed(mArguments* args) {
-	loadConfig();
+void Window::argumentsPassed() {
+	const mArguments* args = m_config->args();
 
 	if (args->patch) {
 		m_pendingPatch = args->patch;
@@ -197,8 +203,23 @@ void Window::argumentsPassed(mArguments* args) {
 	}
 #endif
 
+	if (m_config->graphicsOpts()->multiplier) {
+		m_savedScale = m_config->graphicsOpts()->multiplier;
+
+#if defined(M_CORE_GBA)
+		QSize size(GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
+#elif defined(M_CORE_GB)
+		QSize size(GB_VIDEO_HORIZONTAL_PIXELS, GB_VIDEO_VERTICAL_PIXELS);
+#endif
+		resizeFrame(size * m_savedScale);
+	}
+
 	if (args->fname) {
 		setController(m_manager->loadGame(args->fname), args->fname);
+	}
+
+	if (m_config->graphicsOpts()->fullscreen) {
+		enterFullScreen();
 	}
 }
 
@@ -904,7 +925,18 @@ void Window::gameStarted() {
 			action->setActive(true);
 		}
 	}
+	interrupter.resume();
+
 	m_actions.rebuildMenu(menuBar(), this, *m_shortcutController);
+
+#ifdef M_CORE_GBA
+	if (m_controller->platform() == mPLATFORM_GBA) {
+		QVariant eCardList = m_config->takeArgvOption(QString("ecard"));
+		if (eCardList.canConvert(QMetaType::QStringList)) {
+			m_controller->scanCards(eCardList.toStringList());
+		}
+	}
+#endif
 
 #ifdef USE_DISCORD_RPC
 	DiscordCoordinator::gameStarted(m_controller);
@@ -2024,6 +2056,15 @@ void Window::setController(CoreController* controller, const QString& fname) {
 	connect(m_controller.get(), &CoreController::crashed, this, &Window::gameCrashed);
 	connect(m_controller.get(), &CoreController::failed, this, &Window::gameFailed);
 	connect(m_controller.get(), &CoreController::unimplementedBiosCall, this, &Window::unimplementedBiosCall);
+
+#ifdef M_CORE_GBA
+	if (m_controller->platform() == mPLATFORM_GBA) {
+		QVariant mb = m_config->takeArgvOption(QString("mb"));
+		if (mb.canConvert(QMetaType::QString)) {
+			m_controller->replaceGame(mb.toString());
+		}
+	}
+#endif
 
 #ifdef USE_GDB_STUB
 	if (m_gdbController) {
