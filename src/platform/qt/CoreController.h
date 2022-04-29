@@ -159,6 +159,7 @@ public slots:
 	void loadSave(VFile*, bool temporary);
 	void loadPatch(const QString&);
 	void scanCard(const QString&);
+	void scanCards(const QStringList&);
 	void replaceGame(const QString&);
 	void yankPak();
 
@@ -255,7 +256,11 @@ private:
 	uint64_t m_frameCounter;
 	QList<std::function<void()>> m_resetActions;
 	QList<std::function<void()>> m_frameActions;
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
+	QRecursiveMutex m_actionMutex;
+#else
 	QMutex m_actionMutex{QMutex::Recursive};
+#endif
 	int m_moreFrames = -1;
 	QMutex m_bufferMutex;
 
